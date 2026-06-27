@@ -6,12 +6,12 @@
 together data from three primary sources:
 
 - **Bart Torvik** (`barttorvik.com`) — the industry-standard adjusted
-  efficiency ratings, four factors, shooting splits, and schedule data
-  for D1 men’s basketball
+  efficiency ratings, four factors, shooting splits, player ratings,
+  and schedule data for D1 men's basketball
 - **ESPN** (`site.api.espn.com`) — live and historical game data
   including box scores, play-by-play, win probability, betting lines,
-  and on/off rotations, with a local file database for offline
-  season-wide analysis
+  on/off rotations, and a local file database for offline season-wide
+  analysis
 - **Legacy sources** — Sports Reference game logs and rosters, NCAA.com
   PBP, and Covers.com injury reports
 
@@ -28,8 +28,8 @@ devtools::install_github("charleskonen1/konenMCBB")
 
 ## Part 1: Bart Torvik Ratings
 
-The Torvik family of functions always take a `year` argument — the
-*ending* year of the season (so 2025 means the 2024-25 season).
+The Torvik family of functions take a `year` argument — the *ending*
+year of the season (so `year = 2025` means the 2024-25 season).
 
 ### Team Ratings (T-Rank)
 
@@ -43,6 +43,26 @@ ratings <- torvik_team_ratings(year = 2025)
 ratings |>
   slice_max(barthag, n = 25) |>
   select(rank, team, conf, adj_oe, adj_de, barthag, wab)
+
+# Filter to a single conference
+torvik_team_ratings(year = 2025, conf = "ACC")
+```
+
+### Player Ratings
+
+``` r
+players <- torvik_player_ratings(year = 2025)
+
+# Best offensive contributors (min 10 games)
+players |>
+  arrange(desc(porpag)) |>
+  select(player, team, conf, yr, porpag, adjoe, usage, bpm) |>
+  head(30)
+
+# Conference-level player leaderboard
+torvik_player_ratings(year = 2025, conf = "SEC") |>
+  arrange(desc(bpm)) |>
+  select(player, team, bpm, obpm, dbpm, pts, reb, ast)
 ```
 
 ### Four Factors
@@ -62,7 +82,7 @@ ff |>
 ``` r
 shooting <- torvik_shooting(year = 2025)
 
-# Best rim-finishing teams
+# Best rim-finishing offenses
 shooting |>
   arrange(desc(o_rim_pct)) |>
   select(team, conf, o_rim_pct, o_rim_rate, o_three_rate)
@@ -88,13 +108,18 @@ conf |>
 ### Historical Snapshots
 
 ``` r
-# What did teams look like on March 1st?
-march1 <- timeMachine_ratings(date = "03-01", year = 2025)
+# What did teams look like on March 1st, 2025?
+march1 <- timeMachine_ratings(date = 20250301)
 
 march1 |>
   arrange(desc(barthag)) |>
-  select(rank, team, conf, barthag, adj_oe, adj_de) |>
+  select(rank, team, conf, barthag, adjoe, adjde) |>
   head(20)
+
+# Combine schedule + Time Machine ratings for a single day
+sked_tm <- super_sked_with_timemachine(date = 20250301)
+sked_tm |>
+  select(game_date, team, opponent, team_barthag, opp_barthag, team_WAB)
 ```
 
 ------------------------------------------------------------------------
@@ -151,7 +176,7 @@ game$box_players |>
          true_shooting_pct, plus_minus) |>
   arrange(desc(plus_minus))
 
-# Win probability
+# Win probability chart data
 game$winprobability |>
   select(seq_num, home_win_percentage, play_text) |>
   tail(10)
@@ -170,10 +195,10 @@ box <- espn_season_box("2024-25")
 box |>
   group_by(team_id) |>
   summarise(
-    games    = n(),
-    avg_eff  = mean(eff, na.rm = TRUE),
-    avg_efg  = mean(effective_field_goal_pct, na.rm = TRUE),
-    .groups  = "drop"
+    games   = n(),
+    avg_eff = mean(eff, na.rm = TRUE),
+    avg_efg = mean(effective_field_goal_pct, na.rm = TRUE),
+    .groups = "drop"
   ) |>
   filter(games >= 10) |>
   arrange(desc(avg_eff))
@@ -194,17 +219,32 @@ players |>
   arrange(desc(avg_ts))
 ```
 
+### Step 6: ESPN Power Rankings
+
+``` r
+# Full adjusted-efficiency rankings for a season through a given date
+rankings <- espn_rankings_summary(
+  season = "2024-25",
+  date   = "2025-03-01"
+)
+
+rankings |>
+  select(ranking, team_name, games, wins, losses,
+         adj_off_eff, adj_def_eff, adj_net_eff, relative_rating,
+         resume_score) |>
+  head(25)
+```
+
 ------------------------------------------------------------------------
 
 ## Part 3: Schedule & Résumé Analysis
 
 ``` r
-sked <- get_super_sked(year = 2025, team = "Duke")
-sked |>
-  select(date, opp, result, adj_oe, adj_de, quad) |>
-  arrange(date)
+# Full super-schedule for 2025
+sked <- get_super_sked(year = 2025)
 
-current_resume(team = "Duke", year = 2025)
+# Current team résumé table (current season, all teams)
+current_resume()
 ```
 
 ------------------------------------------------------------------------
@@ -212,10 +252,18 @@ current_resume(team = "Duke", year = 2025)
 ## Part 4: Player Stats & Injuries
 
 ``` r
-# Advanced player stats from Torvik
-player_stats(team = "Duke", year = 2025) |>
+# Advanced player stats from Torvik (season totals/rates)
+player_stats(year = 2025) |>
   arrange(desc(bpm)) |>
-  select(player, pos, min_pct, pts, reb, ast, bpm)
+  head(20)
+
+# NCAA play-by-play (NCAA.com IDs)
+pbp <- ncaa_pbp("6300347")
+pbp |> filter(is_home == FALSE) |> select(period, clock, description)
+
+# NCAA player box score
+box <- ncaa_player_box("6300347")
+box |> arrange(desc(points)) |> select(first_name, last_name, team_id, points, assists)
 
 # Current injury report
 injuryList() |>
@@ -235,3 +283,5 @@ injuryList() |>
   [`espn_process_day()`](../reference/espn_process_day.md) for bulk
   collection
 - **Column names**: all functions return snake_case columns throughout
+- **Time Machine dates**: `timeMachine_ratings()` requires YYYYMMDD
+  integer format (e.g. `20250301`), and coverage starts 2014-11-13
